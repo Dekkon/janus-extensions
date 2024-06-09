@@ -1,8 +1,8 @@
-import JanusAST
+import AST
 
 import Test.Tasty
 import Test.Tasty.HUnit
-import JanusParser (parseProgram)
+import Parser (parseProgram)
 
 main :: IO ()
 main = defaultMain $ localOption (mkTimeout 1000000) tests
