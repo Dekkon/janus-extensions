@@ -92,7 +92,7 @@ pIdent = lexeme $ do
 
 parseComment :: Parser ()
 -- just calling whitespace after reaching newline will remove the newline
-parseComment = do many (do char '#'; munch (/= '\n'); whitespace); return ()
+parseComment = do many (do string "//"; munch (/= '\n'); whitespace); return ()
 
 parseProgram :: String -> Either ParseError Program
 parseProgram s =
@@ -118,7 +118,7 @@ pProcedure :: Parser Procedure
 pProcedure = do   keyword "procedure"
                   pn <- pIdent
                   symbol "("
-                  tdcls <- many pTypeDecl
+                  tdcls <- sepBy pTypeDecl (do symbol ",")
                   symbol ")"
                   Procedure pn tdcls <$> pStmt
 
@@ -135,9 +135,24 @@ pStmt = do  s1 <- pStm
 --          |   ident "+=" Expr | ident "-=" Expr | ident "^= Expr" 
 --          |   Stmt Stmt
 --          |   eps
--- TODO:
 pStm :: Parser Stmt
-pStm = do v <- pVarVal; symbol "+="; SPluseq v <$> pExpr;
+pStm =  do  v <- pVarVal -- do these whilst only parsing first vv one time
+            do  symbol "+="; SPluseq v <$> pExp;
+                <|> do  symbol "-="; SMinuseq v <$> pExp;
+                <|> do  symbol "^="; SXoreq v <$> pExp;
+                <|> do  symbol "<=>"; SSwap v <$> pVarVal;
+        <|> do  keyword "Call"; SCall <$> pIdent
+        <|> do  keyword "Uncall"; SUncall <$> pIdent
+        <|> do  keyword "If"; e1 <- pExp; keyword "Then"
+                s1 <- pStmt; keyword "Else"; s2 <- pStmt
+                keyword "Fi"; SIfThenElse e1 s1 s2 <$> pExp
+        <|> do  keyword "From"; e1 <- pExp; keyword "Do"
+                s1 <- pStmt; keyword "Loop"; s2 <- pStmt
+                keyword "Until"; SFromDoLoopUntil e1 s1 s2 <$> pExp
+
+-- pStm :: Parser Stmt
+-- pStm =  do v <- pVarVal; symbol "+="; SPluseq v <$> pExp;
+--     <|> do v <- pVarVal; symbol "-=";  v <$> pExp;
 
 -- VarDecls ::= { VarDecl }
 pVarDecls :: Parser [VarDecl]
@@ -147,35 +162,33 @@ pVarDecls = many pVarDecl
 --            | "int" ident "[" numConst=i "]" "=" "{" numConst {"," numConst}*i-1 "}"
 --                                                #this means whe must have the same amount of values here
 --                                                #as is the size of the array. 
--- TODO: 
 pVarDecl :: Parser VarDecl
 pVarDecl = do keyword "int"; pVarDeclVar
 
 
 -- TypeDecl ::= "int" ident | "int" indent "[]" 
--- TODO:
 pTypeDecl :: Parser (VName, VarType)
-pTypeDecl = do keyword "int"; vn <- pIdent; return (vn, IntVar)
+pTypeDecl = do  keyword "int"; vn <- pIdent
+                option (vn, IntVar) $
+                    do symbol "[]"; return (vn, ArrayVar)
+
 
 -- Expr ::=     Expr2
 --          |   Expr2 RelOp Expr2
-pExpr :: Parser Exp
-pExpr = do  e1 <- pExpr2
+pExp :: Parser Exp
+pExp = do   e1 <- pExpr2
             option e1 $ do rel_op <- pRelOp; rel_op e1 <$> pExpr2;
 
 -- Expr2 ::=    Expr3 { LogOp Expr3 }
--- TODO:
 pExpr2 :: Parser Exp
 pExpr2 = pExpr3 `chainl1` pLogOp
 
 
 -- Expr3 ::=    Expr4 { AddOp Expr4}
--- TODO:
 pExpr3 = pExpr4 `chainl1` pAddOp
 
 
 -- Expr4 ::=    Expr5 { MulOp Expr5 }
--- TODO:
 pExpr4 :: Parser Exp
 pExpr4 = pExpr5 `chainl1` pMulOp
 
@@ -184,15 +197,18 @@ pExpr4 = pExpr5 `chainl1` pMulOp
 --          |   ident
 --          |   ident "[" Expr "]"
 --          |   "True" | "False"
---          |   "[" Expr { "," Expr } "]"
 --          |   "(" Expr ")"
--- TODO:
 pExpr5 :: Parser Exp
-pExpr5 =    EVar <$> pVarVal
+pExpr5 =    do  name <- pIdent
+                option (EVar name) $
+                    do  symbol "["
+                        num <- pExp -- num is the index or length of array
+                        symbol "]"
+                        return $ EArrIndex name num
         <|> pNumConst
         <|> do keyword "True"; return $ EConst TrueVal
         <|> do keyword "False"; return $ EConst FalseVal
-        <|> do symbol "("; e <- pExpr; symbol ")"; return e
+        <|> do symbol "("; e <- pExp; symbol ")"; return e
 
 
 -- RelOp ::= "=" | "<" | ">"
@@ -238,18 +254,17 @@ pVarVal :: Parser VarVal
 pVarVal = do    name <- pIdent
                 option (IVar name) $
                     do  symbol "["
-                        num <- pExpr -- num is the index or length of array
+                        num <- pExp -- num is the index or length of array
                         symbol "]"
                         return $ AVar name num
 pVarDeclVar :: Parser VarDecl
 pVarDeclVar = do   name <- pIdent
                    option (IntV name) $
                         do  symbol "["
-                            num <- pExpr -- num is the index or length of array
+                            num <- pExp -- num is the index or length of array
                             symbol "]"
                             option (AVar1 name num) $
                                 do  symbol "="; symbol "{";
                                     l <- sepBy1 pJustNum (symbol ",")
                                     symbol "}"
                                     return $ AVar2 name num l
-                                    

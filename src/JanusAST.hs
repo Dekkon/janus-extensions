@@ -16,7 +16,8 @@ data Value =
 
 data Exp =
         EConst Value
-    |   EVar VarVal
+    |   EVar VName
+    |   EArrIndex VName Exp
     |   EOp BinOp Exp Exp
     deriving (Eq, Show, Read)
 
@@ -49,9 +50,9 @@ data Stmt =
     |   SXoreq              VarVal Exp
     |   SSwap               VarVal VarVal
     |   SSeq                Stmt Stmt
-    |   SIfThenElse         Exp Stmt Stmt Exp --if exp1, then stmt1 else stmt2 fi exp2
-    |   SFromDoLoopUntil    Exp Stmt Stmt Exp --from exp1 do stmt1 loop stmt2 until exp2 
     |   SCall               PName
     |   SUncall             PName
-    |   SVarDecl            VName     
+    |   SIfThenElse         Exp Stmt Stmt Exp --if exp1, then stmt1 else stmt2 fi exp2
+    |   SFromDoLoopUntil    Exp Stmt Stmt Exp --from exp1 do stmt1 loop stmt2 until exp2 
+    -- |   SVarDecl            VName     
     deriving(Eq, Show, Read)  
