@@ -26,24 +26,26 @@ type ParseError = String
 --          |   Stmt Stmt
 --          |   eps
 -- 
--- Expr ::=     Expr2
---          |   Expr2 RelOp Expr2
+-- Expr ::=    Expr2 { LogOp Expr2 }
 -- 
--- Expr2 ::=    Expr3 { LogOp Expr3 }
+-- Expr2 ::=    Expr3 [ RelOp Expr3 ]
 -- 
--- Expr3 ::=    Expr4 { AddOp Expr4}
+-- Expr3 ::=    Expr4 { BitWOp Expr4 }
 -- 
--- Expr4 ::=    Expr5 { MulOp Expr5 }
+-- Expr4 ::=    Expr5 { AddOp Expr5}
 -- 
--- Expr5 ::=    numConst
+-- Expr5 ::=    Expr6 { MulOp Expr6 }
+-- 
+-- Expr6 ::=    numConst
 --          |   ident
 --          |   ident "[" Expr "]"
 --          |   "True" | "False"
 --          |   "[" Expr { "," Expr } "]"
 --          |   "(" Expr ")"
 -- 
+-- LogOp ::= "||" | "&&"
 -- RelOp ::= "=" | "<" | ">"
--- LogOp ::= "|" | "&" | "^"
+-- BitWOp ::= "|" | "&" | "^"
 -- AddOp ::= "+" | "-"
 -- MulOp ::= "*" | "/" | "%"
 --
@@ -77,7 +79,7 @@ keyword s = lexeme $ do s' <- munch1 isAlphaNum
 reserved :: [String]
 reserved =  [
               "procedure", "main", "if", "else", "fi", "from", "do", "loop",
-              "until", "call", "uncall"
+              "until", "call", "uncall", "true", "false" 
             ]
 
 pIdent :: Parser String
@@ -108,7 +110,7 @@ pProgram = do p1s <- many pProcedure
               mp <- pMainProcedure
               p2s <- many pProcedure
               eof
-              return $ p1s ++ [mp] ++ p2s
+              return $ p1s ++ [("main", mp)] ++ p2s
 
 -- MainProcedure ::=  "Procedure" "main()" VarDecl Statement
 pMainProcedure :: Parser Procedure
@@ -116,13 +118,14 @@ pMainProcedure = do keyword "procedure"; keyword "main"; symbol "("; symbol ")";
                     vars <- pVarDecls; Main vars <$> pStmt;
 
 -- Procedure ::= "procedure" ident "(" {TypeDecl} ")"  Statement
-pProcedure :: Parser Procedure
+pProcedure :: Parser (PName, Procedure)
 pProcedure = do   keyword "procedure"
                   pn <- pIdent
                   symbol "("
                   tdcls <- sepBy pTypeDecl (do symbol ",")
                   symbol ")"
-                  Procedure pn tdcls <$> pStmt
+                  s <- pStmt
+                  return (pn, Procedure tdcls s)
 
 --          |   Stmt Stmt
 pStmt :: Parser Stmt
@@ -143,14 +146,23 @@ pStm =  do  v <- pVarVal -- do these whilst only parsing first vv one time
                 <|> do  symbol "-="; SMinuseq v <$> pExp;
                 <|> do  symbol "^="; SXoreq v <$> pExp;
                 <|> do  symbol "<=>"; SSwap v <$> pVarVal;
-        <|> do  keyword "Call"; SCall <$> pIdent
-        <|> do  keyword "Uncall"; SUncall <$> pIdent
-        <|> do  keyword "If"; e1 <- pExp; keyword "Then"
-                s1 <- pStmt; keyword "Else"; s2 <- pStmt
-                keyword "Fi"; SIfThenElse e1 s1 s2 <$> pExp
-        <|> do  keyword "From"; e1 <- pExp; keyword "Do"
-                s1 <- pStmt; keyword "Loop"; s2 <- pStmt
-                keyword "Until"; SFromDoLoopUntil e1 s1 s2 <$> pExp
+        <|> do  keyword "call"; pn <- pIdent; SCall pn <$> pCall
+        <|> do  keyword "uncall"; pn <- pIdent; SUncall pn <$> pCall
+        <|> do  keyword "if"; e1 <- pExp; keyword "then"
+                s1 <- pStmt; keyword "else"; s2 <- pStmt
+                keyword "fi"; SIfThenElse e1 s1 s2 <$> pExp
+        <|> do  keyword "from"; e1 <- pExp; keyword "do"
+                s1 <- pStmt; keyword "loop"; s2 <- pStmt
+                keyword "until"; e2 <- pExp; return $ SFromDoLoopUntil e1 s1 s2 e2 True
+
+
+--this parser assumes that 
+--"call" or "uncall" has just been parsed
+pCall :: Parser [VName]
+pCall = do  symbol "("; 
+            varlist <- sepBy pIdent (symbol ",")
+            symbol ")"
+            return varlist
 
 -- pStm :: Parser Stmt
 -- pStm =  do v <- pVarVal; symbol "+="; SPluseq v <$> pExp;
@@ -175,41 +187,46 @@ pTypeDecl = do  keyword "int"; vn <- pIdent
                     do symbol "[]"; return (vn, ArrayVar)
 
 
--- Expr ::=     Expr2
---          |   Expr2 RelOp Expr2
+-- Expr ::=    Expr2 { LogOp Expr2 }
 pExp :: Parser Exp
-pExp = do   e1 <- pExpr2
-            option e1 $ do rel_op <- pRelOp; rel_op e1 <$> pExpr2;
+pExp = pExpr2 `chainl1` pLogOp
 
--- Expr2 ::=    Expr3 { LogOp Expr3 }
+-- Expr2 ::=    Expr3 [ RelOp Expr3 ]
 pExpr2 :: Parser Exp
-pExpr2 = pExpr3 `chainl1` pLogOp
+pExpr2 = do e1 <- pExpr3
+            option e1 $ do relOp <- pRelOp; relOp e1 <$> pExpr3;
+
+
+-- Expr2 ::=    Expr3 { BitWOp Expr3 }
+pExpr3 :: Parser Exp
+pExpr3 = pExpr4 `chainl1` pBitWOp
 
 
 -- Expr3 ::=    Expr4 { AddOp Expr4}
-pExpr3 = pExpr4 `chainl1` pAddOp
+pExpr4 :: Parser Exp
+pExpr4 = pExpr5 `chainl1` pAddOp
 
 
 -- Expr4 ::=    Expr5 { MulOp Expr5 }
-pExpr4 :: Parser Exp
-pExpr4 = pExpr5 `chainl1` pMulOp
+pExpr5 :: Parser Exp
+pExpr5 = pExpr6 `chainl1` pMulOp
 
 
 -- Expr5 ::=    numConst
 --          |   ident
 --          |   ident "[" Expr "]"
---          |   "True" | "False"
+--          |   "true" | "false"
 --          |   "(" Expr ")"
-pExpr5 :: Parser Exp
-pExpr5 =    do  name <- pIdent
+pExpr6 :: Parser Exp
+pExpr6 =    do  name <- pIdent
                 option (EVar name) $
                     do  symbol "["
                         num <- pExp -- num is the index or length of array
                         symbol "]"
                         return $ EArrIndex name num
         <|> pNumConst
-        <|> do keyword "True"; return $ EConst TrueVal
-        <|> do keyword "False"; return $ EConst FalseVal
+        <|> do keyword "true"; return $ EConst $ BoolVal True
+        <|> do keyword "false"; return $ EConst $ BoolVal False
         <|> do symbol "("; e <- pExp; symbol ")"; return e
 
 
@@ -218,11 +235,15 @@ pRelOp :: Parser (Exp -> Exp -> Exp)
 pRelOp =    do symbol "="; return $ EOp Eq
         <|> do symbol "<"; return $ EOp Less
         <|> do symbol ">"; return $ EOp Greater
--- LogOp ::= "|" | "&" | "^"
-pLogOp :: Parser (Exp -> Exp -> Exp)
-pLogOp =    do symbol "&"; return $ EOp LAnd
-        <|> do symbol "|"; return $ EOp LOr
+-- BitWOp ::= "|" | "&" | "^"
+pBitWOp :: Parser (Exp -> Exp -> Exp)
+pBitWOp =   do symbol "&"; return $ EOp BAnd     
+        <|> do symbol "|"; return $ EOp BOr
         <|> do symbol "^"; return $ EOp XOr
+-- LogOp ::= "||" | "&&"
+pLogOp :: Parser (Exp -> Exp -> Exp)
+pLogOp =    do symbol "&&"; return $ EOp LAnd
+        <|> do symbol "||"; return $ EOp LOr
 -- AddOp ::= "+" | "-"
 pAddOp :: Parser (Exp -> Exp -> Exp)
 pAddOp =    do symbol "+"; return $ EOp Plus
@@ -263,7 +284,7 @@ pVarDeclVar :: Parser VarDecl
 pVarDeclVar = do   name <- pIdent
                    option (IntV name) $
                         do  symbol "["
-                            num <- pExp -- num is the index or length of array
+                            num <- pJustNum -- num is the index or length of array
                             symbol "]"
                             option (AVar1 name num) $
                                 do  symbol "="; symbol "{";

@@ -25,9 +25,9 @@ source-repository head
 
 library
   exposed-modules:
-      JanusAST
-      JanusInterp
-      JanusParser
+      AST
+      Interpreter
+      Parser
   other-modules:
       Paths_janus_extended
   autogen-modules:
