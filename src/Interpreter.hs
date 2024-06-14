@@ -64,6 +64,14 @@ withEnv env2 m = Comp (\penv env -> do
 raiseError :: Error -> Comp a
 raiseError err = Comp (\_ _ -> Left err)
 
+getProcedure :: PName -> Comp ([(VName, VarType)], Stmt)
+getProcedure pn = do
+    p <- getProc pn
+    case p of
+        Main _ _ -> raiseError $ BadVar "this should be impossible"
+        Procedure proc_varlist s -> return (proc_varlist, s)
+
+
 -- returns what the index was and the number found there
 indexArrayAtExp :: VName -> Exp -> Comp (Integer, Integer)
 indexArrayAtExp a_name e_indx = do
@@ -105,7 +113,7 @@ getIntVar vn = do
 getArrayVar :: VName -> Comp (Integer, [Integer])
 getArrayVar vn = do
     val <- getVar vn
-    getArrayVal val (BadVar ("Variable: " ++ vn ++ " must be an "))
+    getArrayVal val (BadVar ("Variable: " ++ vn ++ " must be an array var"))
 
 getArrayVal :: Value -> Error -> Comp (Integer, [Integer])
 getArrayVal (ArrayVal len arr) _  = return (len, arr)
@@ -212,23 +220,39 @@ executeStmt (SFromDoLoopUntil e1 s1 s2 e2 firstIter) = do
         if b2 then return ()
         --enter loop again, where we are not in firstiter
         else do
-            executeStmt s2 
+            executeStmt s2
             executeStmt (SFromDoLoopUntil e1 s2 s2 e2 False)
     else raiseError $ BadAssertion ("Assertion should be " ++ show firstIter)
 executeStmt (SCall pn input_varlist) = callOrUncallProc pn input_varlist executeStmt
 executeStmt (SUncall pn input_varlist) = callOrUncallProc pn input_varlist unexecuteStmt
+executeStmt (SCompinator Map cou pn vn) = do
+    (len, arr) <- getArrayVar vn
+    (vlist , s) <- getProcedure pn
+    if length vlist /= 1 then raiseError $ BadArity "proc in map must only take 1 var"
+    else
+        case vlist of
+            [(x, IntVar)] ->
+                mapM_ (\i ->
+                        executeStmt (createCallOrUncall cou pn [IndexVar vn (EConst $ IntVal (toInteger i))]))
+                    [0..length arr - 1]
+            _ -> raiseError $ BadVar "proc in map must take int as its argument"
 
-callOrUncallProc :: PName -> [VName] -> (Stmt -> Comp ()) -> Comp ()
-callOrUncallProc pn input_varlist stmt_execution = do 
+createCallOrUncall :: CallOrUncall -> PName -> [ArgVar] -> Stmt
+createCallOrUncall Call = SCall
+createCallOrUncall Uncall = SUncall
+
+callOrUncallProc :: PName -> [ArgVar] -> (Stmt -> Comp ()) -> Comp ()
+callOrUncallProc pn input_varlist stmt_execution = do
     p <- getProc pn
     case p of
         Main _ _ -> raiseError $ BadVar "this should be impossible"
         Procedure proc_varlist s -> do
+            old_env <- getEnv
             p_env <- createNewEnv input_varlist proc_varlist
                                     --whether this is exe or unexe
                                     --is based on if call/uncall called this
             new_env <- withEnv p_env (stmt_execution s)
-            updateOldEnv input_varlist proc_varlist new_env
+            updateOldEnv input_varlist proc_varlist old_env new_env
 
 unexecuteStmt :: Stmt -> Comp ()
 unexecuteStmt (SSeq s1 s2) = unexecuteStmt s2 >> unexecuteStmt s1
@@ -261,47 +285,70 @@ unexecuteStmt (SFromDoLoopUntil e1 s1 s2 e2 firstIter) = do
         if b1 then return ()
         --enter loop again, where we are not in firstiter
         else do
-            unexecuteStmt s2 
+            unexecuteStmt s2
             unexecuteStmt (SFromDoLoopUntil e1 s2 s2 e2 False)
     else raiseError $ BadAssertion ("Assertion should be " ++ show firstIter)
             -- when calling normally within undo we wanna contiue undoing
 unexecuteStmt (SCall pn input_varlist) = callOrUncallProc pn input_varlist unexecuteStmt
             -- when uncalling within undo, we wanna just do
 unexecuteStmt (SUncall pn input_varlist) = callOrUncallProc pn input_varlist executeStmt
+unexecuteStmt (SCompinator Map cou pn vn) =
+    case cou of 
+        Call -> executeStmt (SCompinator Map Uncall pn vn)
+        Uncall -> executeStmt (SCompinator Map Call pn vn)
 
-createNewEnv :: [VName] -> [(VName, VarType)] -> Comp Env
+createNewEnv :: [ArgVar] -> [(VName, VarType)] -> Comp Env
 createNewEnv in_vlist p_vlist = do
     if length in_vlist /= length p_vlist then
         raiseError $ BadArity "arity of procedure doesn't match argument arity"
     else createEnvHelper in_vlist p_vlist
     where
-        createEnvHelper :: [VName] -> [(VName, VarType)] -> Comp Env
+        createEnvHelper :: [ArgVar] -> [(VName, VarType)] -> Comp Env
         createEnvHelper [] [] = return M.empty
         createEnvHelper (v1 : l1s) ((v2, v2t) : l2s) =  do
-            case v2t of
-                IntVar -> do
-                        -- this will fail if v1 is not an integer
-                    n <- getIntVar v1
-                    env2 <- createEnvHelper l1s l2s
-                    return $ M.insert v2 (IntVal n) env2
-                ArrayVar -> do
-                                -- this will fail if v1 is not an array
-                    (len, arr) <- getArrayVar v1
-                    env2 <- createEnvHelper l1s l2s
-                    return $ M.insert v2 (ArrayVal len arr) env2
+            case v1 of
+                NVar var_name ->
+                    case v2t of
+                        IntVar -> do
+                                -- this will fail if var_name is not an integer
+                            n <- getIntVar var_name
+                            env2 <- createEnvHelper l1s l2s
+                            return $ M.insert v2 (IntVal n) env2
+                        ArrayVar -> do
+                                        -- this will fail if var_name is not an array
+                            (len, arr) <- getArrayVar var_name
+                            env2 <- createEnvHelper l1s l2s
+                            return $ M.insert v2 (ArrayVal len arr) env2
+                IndexVar var_name e ->
+                    case v2t of
+                        IntVar -> do
+                            (_, n) <- indexArrayAtExp var_name e
+                            env2 <- createEnvHelper l1s l2s
+                            return $ M.insert v2 (IntVal n) env2
+                        ArrayVar -> raiseError $ BadVar "Trying to give int as var when array is expected"
 
-updateOldEnv :: [VName] -> [(VName, VarType)] -> Env -> Comp ()
-updateOldEnv [] [] _ = return ()
-updateOldEnv (v1 : l1s) ((v2, _) : l2s) n_env =
+updateOldEnv :: [ArgVar] -> [(VName, VarType)] -> Env -> Env -> Comp ()
+updateOldEnv [] [] _ _ = return ()
+updateOldEnv (v1 : l1s) ((v2, _) : l2s) o_env n_env =
     case M.lookup v2 n_env of
         Nothing -> raiseError $ BadVar "should not happen"
-        Just val -> setVar v1 val >> updateOldEnv l1s l2s n_env
+        Just val -> 
+            case v1 of
+                NVar var_name ->
+                    setVar var_name val >> updateOldEnv l1s l2s o_env n_env
+                    --TODO: fix shadowing issues to do with this
+                IndexVar var_name varexp -> do
+                    (i, _) <- indexArrayAtExp var_name varexp
+                    n <- getIntVal val (BadVal "should be int")
+                    setValInArrayAtIndex var_name i n
+                    -- setVar var_name 
+                    updateOldEnv l1s l2s o_env n_env
 
 setUpEnv :: Procedure -> Env
 setUpEnv (Main vds _) = setUpEnvHelper vds
-    where 
+    where
         setUpEnvHelper [] = M.empty
-        setUpEnvHelper (vd : vs) = 
+        setUpEnvHelper (vd : vs) =
             let (var_name, val) =
                     case vd of
                         IntV vn -> (vn, IntVal 0)
@@ -310,7 +357,7 @@ setUpEnv (Main vds _) = setUpEnvHelper vds
             in M.insert var_name val (setUpEnvHelper vs)
 setUpEnv _ = error "only call setup env with main"
 
-executeProgram :: Program -> Either Error ((), Env)
+executeProgram :: Program -> Either Error Env
 executeProgram proc_list =
     let penv = M.fromList proc_list
         main = case M.lookup "main" penv of
@@ -321,4 +368,6 @@ executeProgram proc_list =
         main_s = case main of
                     Main _ s -> s
                     _ -> error "not main"
-    in runComp (executeStmt main_s) penv2 env
+    in case runComp (executeStmt main_s) penv2 env of
+        Left e -> Left e
+        Right (_, env) -> Right env

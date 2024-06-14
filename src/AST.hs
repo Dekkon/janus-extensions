@@ -42,6 +42,9 @@ data VarDecl = IntV VName | AVar1 VName Integer | AVar2 VName Integer [Integer]
 data VarVal = IVar VName | AVar VName Exp
     deriving(Eq, Show, Read)
 
+data ArgVar = NVar VName | IndexVar VName Exp
+    deriving(Eq, Show, Read)
+
 data VarType = IntVar | ArrayVar
     deriving(Eq, Show, Read)
 
@@ -51,9 +54,16 @@ data Stmt =
     |   SXoreq              VarVal Exp
     |   SSwap               VarVal VarVal
     |   SSeq                Stmt Stmt
-    |   SCall               PName [VName] 
-    |   SUncall             PName [VName]
+    |   SCall               PName [ArgVar] 
+    |   SUncall             PName [ArgVar]
     |   SIfThenElse         Exp Stmt Stmt Exp --if exp1, then stmt1 else stmt2 fi exp2
                 -- bool here to indicate whether in first or subsequent iterations of loop
-    |   SFromDoLoopUntil    Exp Stmt Stmt Exp Bool --from exp1 do stmt1 loop stmt2 until exp2     
+    |   SFromDoLoopUntil    Exp Stmt Stmt Exp Bool --from exp1 do stmt1 loop stmt2 until exp2  
+    |   SCompinator         Combinator CallOrUncall PName VName 
     deriving(Eq, Show, Read)  
+
+data CallOrUncall = Call | Uncall
+    deriving(Eq, Show, Read)
+
+data Combinator = Map
+    deriving(Eq, Show, Read)

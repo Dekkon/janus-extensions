@@ -63,8 +63,6 @@ type ParseError = String
 whitespace :: Parser ()
 whitespace = skipSpaces
 lexeme :: Parser a -> Parser a
--- lexeme p = do a <- p; whitespace; parseComment; whitespace; return a
--- removes whitespace, removes comments, 
 lexeme p = do a <- p; whitespace; parseComment; return a
 symbol :: String -> Parser ()
 symbol s = lexeme $ do string s; return ()
@@ -79,7 +77,7 @@ keyword s = lexeme $ do s' <- munch1 isAlphaNum
 reserved :: [String]
 reserved =  [
               "procedure", "main", "if", "else", "fi", "from", "do", "loop",
-              "until", "call", "uncall", "true", "false" 
+              "until", "call", "uncall", "true", "false"
             ]
 
 pIdent :: Parser String
@@ -106,11 +104,12 @@ parseProgram s =
           e -> error $ show e
 -- Program ::= { Procedure } MainProcedure { Procedure }
 pProgram :: Parser Program
-pProgram = do p1s <- many pProcedure
-              mp <- pMainProcedure
-              p2s <- many pProcedure
-              eof
-              return $ p1s ++ [("main", mp)] ++ p2s
+pProgram = do   whitespace; parseComment
+                p1s <- many pProcedure
+                mp <- pMainProcedure
+                p2s <- many pProcedure
+                eof
+                return $ p1s ++ [("main", mp)] ++ p2s
 
 -- MainProcedure ::=  "Procedure" "main()" VarDecl Statement
 pMainProcedure :: Parser Procedure
@@ -154,13 +153,27 @@ pStm =  do  v <- pVarVal -- do these whilst only parsing first vv one time
         <|> do  keyword "from"; e1 <- pExp; keyword "do"
                 s1 <- pStmt; keyword "loop"; s2 <- pStmt
                 keyword "until"; e2 <- pExp; return $ SFromDoLoopUntil e1 s1 s2 e2 True
+        <|> do  keyword "map"; cou <- pCallorUncall; pn <- pIdent
+                SCompinator Map cou pn <$> pIdent
+
+pCallorUncall :: Parser CallOrUncall
+pCallorUncall = do keyword "uncall"; return Uncall
+            <|> do keyword "call"; return Call 
 
 
 --this parser assumes that 
 --"call" or "uncall" has just been parsed
-pCall :: Parser [VName]
-pCall = do  symbol "("; 
-            varlist <- sepBy pIdent (symbol ",")
+pCall :: Parser [ArgVar]
+pCall = do  symbol "(";
+            varlist <- sepBy 
+                (do n <- pIdent; 
+                    option (NVar n) $
+                        do  symbol "["
+                            e <- pExp
+                            symbol "]"
+                            return $ IndexVar n e
+                ) 
+                (symbol ",")
             symbol ")"
             return varlist
 
@@ -237,7 +250,7 @@ pRelOp =    do symbol "="; return $ EOp Eq
         <|> do symbol ">"; return $ EOp Greater
 -- BitWOp ::= "|" | "&" | "^"
 pBitWOp :: Parser (Exp -> Exp -> Exp)
-pBitWOp =   do symbol "&"; return $ EOp BAnd     
+pBitWOp =   do symbol "&"; return $ EOp BAnd
         <|> do symbol "|"; return $ EOp BOr
         <|> do symbol "^"; return $ EOp XOr
 -- LogOp ::= "||" | "&&"
