@@ -60,10 +60,12 @@ data Stmt =
                 -- bool here to indicate whether in first or subsequent iterations of loop
     |   SFromDoLoopUntil    Exp Stmt Stmt Exp Bool --from exp1 do stmt1 loop stmt2 until exp2  
     |   SCompinator         Combinator CallOrUncall PName VName 
+    |   SIota               VName
+    |   SAtoi               VName
     deriving(Eq, Show, Read)  
 
 data CallOrUncall = Call | Uncall
     deriving(Eq, Show, Read)
 
-data Combinator = Map
+data Combinator = Map | Scanl
     deriving(Eq, Show, Read)

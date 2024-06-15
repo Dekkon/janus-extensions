@@ -233,9 +233,30 @@ executeStmt (SCompinator Map cou pn vn) = do
         case vlist of
             [(x, IntVar)] ->
                 mapM_ (\i ->
-                        executeStmt (createCallOrUncall cou pn [IndexVar vn (EConst $ IntVal (toInteger i))]))
-                    [0..length arr - 1]
+                        executeStmt (createCallOrUncall cou pn [IndexVar vn (EConst $ IntVal i)]))
+                    [0..len - 1]
             _ -> raiseError $ BadVar "proc in map must take int as its argument"
+executeStmt (SCompinator Scanl cou pn vn) = do
+    (len, arr) <- getArrayVar vn
+    (vlist , s) <- getProcedure pn
+    if length vlist /= 2 then raiseError $ BadArity "proc in map must only take 2 vars"
+    else
+        case vlist of
+            [(x1, IntVar), (x2, IntVar)] ->
+                mapM_ (\(i, j) ->
+                        executeStmt 
+                            (createCallOrUncall cou pn 
+                                [IndexVar vn (EConst $ IntVal i)
+                                ,IndexVar vn (EConst $ IntVal j)]))
+                    (zip [0..len - 2] [1..len - 1] )
+            _ -> raiseError $ BadVar "proc in map must take two ints as its arguments"
+executeStmt (SIota vn) = do
+    (len, arr) <- getArrayVar vn
+    mapM_ (\i -> setValInArrayAtIndex vn i (i + arr !! fromIntegral i) ) [0 .. len-1]
+executeStmt (SAtoi vn) = do
+    (len, arr) <- getArrayVar vn
+    mapM_ (\i -> setValInArrayAtIndex vn i (arr !! fromIntegral i - i) ) [0 .. len-1]
+
 
 createCallOrUncall :: CallOrUncall -> PName -> [ArgVar] -> Stmt
 createCallOrUncall Call = SCall
@@ -292,10 +313,33 @@ unexecuteStmt (SFromDoLoopUntil e1 s1 s2 e2 firstIter) = do
 unexecuteStmt (SCall pn input_varlist) = callOrUncallProc pn input_varlist unexecuteStmt
             -- when uncalling within undo, we wanna just do
 unexecuteStmt (SUncall pn input_varlist) = callOrUncallProc pn input_varlist executeStmt
-unexecuteStmt (SCompinator Map cou pn vn) =
-    case cou of 
-        Call -> executeStmt (SCompinator Map Uncall pn vn)
-        Uncall -> executeStmt (SCompinator Map Call pn vn)
+unexecuteStmt (SCompinator Map cou pn vn) = 
+    executeStmt (SCompinator Map (swapCallUnCall cou) pn vn)
+    -- case cou of 
+    --     Call -> executeStmt (SCompinator Map Uncall pn vn)
+    --     Uncall -> executeStmt (SCompinator Map Call pn vn)
+unexecuteStmt (SCompinator Scanl cou pn vn) = do
+    (len, arr) <- getArrayVar vn
+    (vlist , s) <- getProcedure pn
+    if length vlist /= 2 then raiseError $ BadArity "proc in map must take 2 vars"
+    else
+        case vlist of
+            [(x1, IntVar), (x2, IntVar)] ->
+                mapM_ (\(i, j) ->
+                        executeStmt 
+                            (createCallOrUncall (swapCallUnCall cou) pn 
+                                [IndexVar vn (EConst $ IntVal (toInteger i))
+                                ,IndexVar vn (EConst $ IntVal (toInteger j))]))
+                    (zip (reverse [0..length arr - 2]) (reverse[1..length arr - 1]) )
+            _ -> raiseError $ BadVar "proc in map must take two ints as its arguments"
+unexecuteStmt (SIota v) = executeStmt (SAtoi v)
+unexecuteStmt (SAtoi v) = executeStmt (SIota v)
+
+swapCallUnCall :: CallOrUncall -> CallOrUncall
+swapCallUnCall Call = Uncall
+swapCallUnCall Uncall = Call
+
+
 
 createNewEnv :: [ArgVar] -> [(VName, VarType)] -> Comp Env
 createNewEnv in_vlist p_vlist = do
@@ -353,7 +397,10 @@ setUpEnv (Main vds _) = setUpEnvHelper vds
                     case vd of
                         IntV vn -> (vn, IntVal 0)
                         AVar1 vn len -> if len < 1 then error "oof" else (vn, ArrayVal len (replicate (fromIntegral len) 0))
-                        AVar2 vn len arr -> if len < 1 || length arr /= fromIntegral len then error "oof" else (vn, ArrayVal len arr)
+                        AVar2 vn len arr -> 
+                            if len < 1 || length arr /= fromIntegral len 
+                                then error "oof" 
+                            else (vn, ArrayVal len arr)
             in M.insert var_name val (setUpEnvHelper vs)
 setUpEnv _ = error "only call setup env with main"
 

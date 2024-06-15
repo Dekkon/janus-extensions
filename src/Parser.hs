@@ -153,8 +153,15 @@ pStm =  do  v <- pVarVal -- do these whilst only parsing first vv one time
         <|> do  keyword "from"; e1 <- pExp; keyword "do"
                 s1 <- pStmt; keyword "loop"; s2 <- pStmt
                 keyword "until"; e2 <- pExp; return $ SFromDoLoopUntil e1 s1 s2 e2 True
-        <|> do  keyword "map"; cou <- pCallorUncall; pn <- pIdent
-                SCompinator Map cou pn <$> pIdent
+        <|> do  keyword "map"; pParserCombinator Map
+        <|> do  keyword "scanl"; pParserCombinator Scanl
+        <|> do keyword "iota"; SIota <$> pIdent
+        <|> do keyword "atoi"; SAtoi <$> pIdent
+
+pParserCombinator :: Combinator -> Parser Stmt
+pParserCombinator comb = do
+                cou <- pCallorUncall; pn <- pIdent
+                SCompinator comb cou pn <$> pIdent
 
 pCallorUncall :: Parser CallOrUncall
 pCallorUncall = do keyword "uncall"; return Uncall
