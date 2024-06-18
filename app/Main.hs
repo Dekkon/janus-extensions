@@ -11,30 +11,21 @@ import System.Exit (die)
 import System.Environment (getArgs)
 import qualified Data.Map.Strict as M
 import Data.Map(Map)
-
 run :: Program -> IO ()
 run p =
   do let res = executeProgram p
     --  mapM_ putStrLn out
      case res of
        Left e -> print e
-       Right env -> mapM_ print (M.toList env)
+       Right env -> mapM_ (\(var_name, value) -> putStrLn $ var_name ++ " = " ++ showVal value ) (M.toList env)
 
 main :: IO ()
 main = do args <- getArgs
           case args of
-            -- ["-i", file] -> do
-            --   s <- readFile file
-            --   run $ read s
-            -- ["-p", file] -> do
-            --   s <- readFile file
-            --   case parseString s of
-            --     Left e -> putStrLn $ "*** Parse error: " ++ show e
-            --     Right p -> putStrLn $ show p
             [file] -> do
               s <- readFile file
               case parseProgram s of
-                Left e -> putStrLn $ "*** Parse error: " ++ show e
+                Left e -> putStrLn "*** Parsing error"
                 Right p -> run p
             _ ->
               die "Usage:\n\

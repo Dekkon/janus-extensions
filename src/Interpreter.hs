@@ -1,4 +1,7 @@
 {-# OPTIONS_GHC -Wno-noncanonical-monad-instances #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Use lambda-case" #-}
+{-# HLINT ignore "Use zipWith" #-}
 
 
 module Interpreter where
@@ -9,12 +12,14 @@ import Control.Monad
 import qualified Data.Map.Strict as M
 import Data.Map(Map)
 import Data.Bits
+import Data.List (nub)
 
 
 type Env = Map VName Value
 type PEnv = Map PName Procedure
 
-data Error =    BadVar String | BadProc String | BadIndex String | BadVal String
+type Error = (ErrorType, String)
+data ErrorType =    BadVar String | BadProc String | BadIndex String | BadVal String
             |   BadAssertion String | BadArity String
     deriving(Eq, Show, Read)
 
@@ -37,7 +42,7 @@ instance Applicative Comp where
 getVar :: VName -> Comp Value
 getVar vn = Comp (\_ env ->
                     case M.lookup vn env of
-                        Nothing -> Left $ BadVar ("Variable " ++ vn ++ " has not been declared")
+                        Nothing -> Left (BadVar ("Variable " ++ vn ++ " has not been declared"), show env)
                         Just value -> return (value, env)
                 )
 
@@ -50,7 +55,7 @@ getEnv = Comp (\_ env -> return (env, env))
 getProc :: PName -> Comp Procedure
 getProc pn = Comp   (\penv env ->
                         case M.lookup pn penv of
-                            Nothing -> Left $ BadProc ("Procedure " ++ pn ++ " has not been declared")
+                            Nothing -> Left $ (BadProc ("Procedure " ++ pn ++ " has not been declared"), show env)
                             Just p -> return (p, env)
                     )
 
@@ -61,15 +66,15 @@ withEnv env2 m = Comp (\penv env -> do
                             -- returns the new env and restores the old
                       )
 
-raiseError :: Error -> Comp a
-raiseError err = Comp (\_ _ -> Left err)
+raiseError :: ErrorType -> Comp a
+raiseError err = Comp (\_ env -> Left (err, show env))
 
-getProcedure :: PName -> Comp ([(VName, VarType)], Stmt)
+getProcedure :: PName -> Comp ([(VName, VarType)], [VarDecl], Stmt)
 getProcedure pn = do
     p <- getProc pn
     case p of
         Main _ _ -> raiseError $ BadVar "this should be impossible"
-        Procedure proc_varlist s -> return (proc_varlist, s)
+        Procedure proc_varlist vdcls s -> return (proc_varlist, vdcls, s)
 
 
 -- returns what the index was and the number found there
@@ -99,7 +104,7 @@ setValInArrayAtIndex a_name i newnum = do
                 setVar a_name (ArrayVal size new_arr)
         _ -> raiseError $ BadVar ("Variable " ++ a_name ++ " is not an array")
 
-getIntVal :: Value -> Error -> Comp Integer
+getIntVal :: Value -> ErrorType -> Comp Integer
 getIntVal (IntVal n) _  = return n
 getIntVal _ e  = raiseError e
 
@@ -115,11 +120,11 @@ getArrayVar vn = do
     val <- getVar vn
     getArrayVal val (BadVar ("Variable: " ++ vn ++ " must be an array var"))
 
-getArrayVal :: Value -> Error -> Comp (Integer, [Integer])
+getArrayVal :: Value -> ErrorType -> Comp (Integer, [Integer])
 getArrayVal (ArrayVal len arr) _  = return (len, arr)
 getArrayVal _ e  = raiseError e
 
-getBoolVal :: Value -> Error -> Comp Bool
+getBoolVal :: Value -> ErrorType -> Comp Bool
 getBoolVal (BoolVal b) _  = return b
 getBoolVal _ e  = raiseError e
 
@@ -141,7 +146,7 @@ operate BOr (IntVal v1) (IntVal v2) = return $ IntVal (v1 .|. v2)
 operate XOr (IntVal v1) (IntVal v2) = return $ IntVal (v1 `xor` v2)
 operate Eq (IntVal v1) (IntVal v2) = return $ BoolVal (v1 == v2)
 operate Less (IntVal v1) (IntVal v2) = return $ BoolVal (v1 < v2)
-operate Greater (IntVal v1) (IntVal v2) = return $ BoolVal (v1 < v2)
+operate Greater (IntVal v1) (IntVal v2) = return $ BoolVal (v1 > v2)
 operate LAnd (BoolVal v1) (BoolVal v2) = return $ BoolVal (v1 && v2)
 operate LOr (BoolVal v1) (BoolVal v2) = return $ BoolVal (v1 || v2)
 operate op v1 v2 = Left $ "Cannot perform " ++ show op ++ " on the values "
@@ -207,7 +212,7 @@ executeStmt (SIfThenElse e1 s1 s2 e2) = do
         val2 <- evalExp e2
         b2 <- getBoolValExpErr val2
         if not b2 then return ()
-        else raiseError $ BadAssertion "Assertion should be false"
+        else raiseError $ BadAssertion $ "Assertion should be false " ++ show e2
 -- if firstIter is true, then initial condition must be true
 -- if it is false, then initial condition must be false
 executeStmt (SFromDoLoopUntil e1 s1 s2 e2 firstIter) = do
@@ -227,7 +232,7 @@ executeStmt (SCall pn input_varlist) = callOrUncallProc pn input_varlist execute
 executeStmt (SUncall pn input_varlist) = callOrUncallProc pn input_varlist unexecuteStmt
 executeStmt (SCompinator Map cou pn vn) = do
     (len, arr) <- getArrayVar vn
-    (vlist , s) <- getProcedure pn
+    (vlist, vds, s) <- getProcedure pn
     if length vlist /= 1 then raiseError $ BadArity "proc in map must only take 1 var"
     else
         case vlist of
@@ -238,18 +243,76 @@ executeStmt (SCompinator Map cou pn vn) = do
             _ -> raiseError $ BadVar "proc in map must take int as its argument"
 executeStmt (SCompinator Scanl cou pn vn) = do
     (len, arr) <- getArrayVar vn
-    (vlist , s) <- getProcedure pn
+    (vlist, vds, s) <- getProcedure pn
     if length vlist /= 2 then raiseError $ BadArity "proc in map must only take 2 vars"
     else
         case vlist of
             [(x1, IntVar), (x2, IntVar)] ->
                 mapM_ (\(i, j) ->
-                        executeStmt 
-                            (createCallOrUncall cou pn 
+                        executeStmt
+                            (createCallOrUncall cou pn
                                 [IndexVar vn (EConst $ IntVal i)
                                 ,IndexVar vn (EConst $ IntVal j)]))
                     (zip [0..len - 2] [1..len - 1] )
             _ -> raiseError $ BadVar "proc in map must take two ints as its arguments"
+executeStmt (SCompinator Scanlw cou pn vn) = do
+    (len, arr) <- getArrayVar vn
+    (vlist, vds, s) <- getProcedure pn
+    mapM_ (\ arg_v ->  -- check that procedure only takes ints as args
+        case arg_v of
+            (_, IntVar) -> return ()
+            _ -> raiseError $ BadVar "proc in scan must only take ints as arguments")
+        vlist
+    mapM_ (\ i ->
+                executeStmt
+                    (
+                        createCallOrUncall cou pn (map (\ j -> IndexVar vn (EConst $ IntVal j)) [i..i-1+toInteger (length vlist)])
+                    )
+            )
+        [0..len - toInteger (length vlist) ]
+executeStmt (SCompinator Scanrw cou pn vn) = do
+    (len, arr) <- getArrayVar vn
+    (vlist, vds, _) <- getProcedure pn
+    mapM_ (\ arg_v ->  -- check that procedure only takes ints as args
+        case arg_v of
+            (_, IntVar) -> return ()
+            _ -> raiseError $ BadVar "proc in scan must only take ints as arguments")
+        vlist
+    mapM_ (\ i ->
+                executeStmt
+                    (
+                        createCallOrUncall cou pn (map (\ j -> IndexVar vn (EConst $ IntVal j)) [i+1-toInteger (length vlist)..i])
+                    )
+            )
+        (reverse [toInteger (length vlist)-1..len -1 ])
+executeStmt (SScanlwz cou pn arr_vlist) = do
+        (args_per_array, arr_len) <- setupScanwz cou pn arr_vlist
+        mapM_ (\ i ->
+                    executeStmt
+                        (
+                            let var_input = 
+                                        concatMap (\ an ->
+                                                    map (\ j -> IndexVar an (EConst $ IntVal j)) [i..i-1+ args_per_array  ]
+                                                  ) arr_vlist
+                            in
+                                createCallOrUncall cou pn var_input
+                        )
+                )
+            [0..arr_len - args_per_array ]
+executeStmt (SScanrwz cou pn arr_vlist) = do
+        (args_per_array, arr_len) <- setupScanwz cou pn arr_vlist
+        mapM_ (\ i ->
+                    executeStmt
+                        (
+                            let var_input = 
+                                        concatMap (\ an ->
+                                                    map (\ j -> IndexVar an (EConst $ IntVal j)) [i+ 1 - args_per_array..i ]
+                                                  ) arr_vlist
+                            in
+                                createCallOrUncall cou pn var_input
+                        )
+                )
+            (reverse [args_per_array-1..arr_len - 1 ])
 executeStmt (SIota vn) = do
     (len, arr) <- getArrayVar vn
     mapM_ (\i -> setValInArrayAtIndex vn i (i + arr !! fromIntegral i) ) [0 .. len-1]
@@ -258,21 +321,50 @@ executeStmt (SAtoi vn) = do
     mapM_ (\i -> setValInArrayAtIndex vn i (arr !! fromIntegral i - i) ) [0 .. len-1]
 
 
+setupScanwz :: CallOrUncall -> PName -> [VName] -> Comp (Integer, Integer)
+setupScanwz cou pn arr_vlist = do 
+    len_arr_lists <- mapM getArrayVar arr_vlist
+    (vlist, vds, _) <- getProcedure pn
+    let (lenghts_list, arr_lists) = unzip len_arr_lists
+        c_arr_length = case nub lenghts_list of
+                        [l] -> return l
+                        _ -> raiseError $ BadVar "all arrays in input must have same length"
+        number_of_args = length vlist
+        number_of_arrays = length arr_vlist
+        args_per_array = toInteger $ number_of_args`div` number_of_arrays
+        in do
+            arr_len <- c_arr_length
+            when (number_of_args `mod` number_of_arrays /= 0) $ raiseError $ BadArity "proc must have input amount divisible by number of arrays"
+            mapM_ (\ arg_v ->  -- check that procedure only takes ints as args
+                case arg_v of
+                    (_, IntVar) -> return ()
+                    _ -> raiseError $ BadVar "proc in scan must only take ints as arguments")
+                vlist
+            return (args_per_array, arr_len)
+
+
+
 createCallOrUncall :: CallOrUncall -> PName -> [ArgVar] -> Stmt
 createCallOrUncall Call = SCall
 createCallOrUncall Uncall = SUncall
 
 callOrUncallProc :: PName -> [ArgVar] -> (Stmt -> Comp ()) -> Comp ()
 callOrUncallProc pn input_varlist stmt_execution = do
-    p <- getProc pn
-    case p of
-        Main _ _ -> raiseError $ BadVar "this should be impossible"
-        Procedure proc_varlist s -> do
-            old_env <- getEnv
-            p_env <- createNewEnv input_varlist proc_varlist
-                                    --whether this is exe or unexe
-                                    --is based on if call/uncall called this
-            new_env <- withEnv p_env (stmt_execution s)
+    (proc_varlist, vardecls, s) <- getProcedure pn
+    old_env <- getEnv
+    var_decl_env <- setUpEnvComp vardecls
+    arg_env <- createNewEnv input_varlist proc_varlist
+                                --whether this is exe or unexe
+                                --is based on if call/uncall called this
+    let proc_env = M.union var_decl_env arg_env
+        in do
+            when (M.size proc_env /= length input_varlist + length vardecls) $ raiseError $ BadProc "proc cannot have variables with the same name"
+            new_env <- withEnv proc_env (stmt_execution s)
+            mapM_   (\(vd_name, vd_val) -> 
+                        case M.lookup vd_name new_env of
+                            Nothing -> raiseError $ BadVar "this shouldn't be possible"
+                            Just val -> when (vd_val /= val) $ raiseError $ BadVar "local variables in procedure must return to initial value"
+                    ) (M.toList var_decl_env)
             updateOldEnv input_varlist proc_varlist old_env new_env
 
 unexecuteStmt :: Stmt -> Comp ()
@@ -313,25 +405,33 @@ unexecuteStmt (SFromDoLoopUntil e1 s1 s2 e2 firstIter) = do
 unexecuteStmt (SCall pn input_varlist) = callOrUncallProc pn input_varlist unexecuteStmt
             -- when uncalling within undo, we wanna just do
 unexecuteStmt (SUncall pn input_varlist) = callOrUncallProc pn input_varlist executeStmt
-unexecuteStmt (SCompinator Map cou pn vn) = 
+unexecuteStmt (SCompinator Map cou pn vn) =
     executeStmt (SCompinator Map (swapCallUnCall cou) pn vn)
     -- case cou of 
     --     Call -> executeStmt (SCompinator Map Uncall pn vn)
     --     Uncall -> executeStmt (SCompinator Map Call pn vn)
 unexecuteStmt (SCompinator Scanl cou pn vn) = do
     (len, arr) <- getArrayVar vn
-    (vlist , s) <- getProcedure pn
+    (vlist, vds, s) <- getProcedure pn
     if length vlist /= 2 then raiseError $ BadArity "proc in map must take 2 vars"
     else
         case vlist of
             [(x1, IntVar), (x2, IntVar)] ->
                 mapM_ (\(i, j) ->
-                        executeStmt 
-                            (createCallOrUncall (swapCallUnCall cou) pn 
+                        executeStmt
+                            (createCallOrUncall (swapCallUnCall cou) pn
                                 [IndexVar vn (EConst $ IntVal (toInteger i))
                                 ,IndexVar vn (EConst $ IntVal (toInteger j))]))
-                    (zip (reverse [0..length arr - 2]) (reverse[1..length arr - 1]) )
+                    (zip (reverse [0..length arr - 2]) (reverse [1..length arr - 1]) )
             _ -> raiseError $ BadVar "proc in map must take two ints as its arguments"
+unexecuteStmt (SCompinator Scanlw cou pn vn) =
+    executeStmt (SCompinator Scanrw (swapCallUnCall cou) pn vn)
+unexecuteStmt (SCompinator Scanrw cou pn vn) =
+    executeStmt (SCompinator Scanlw (swapCallUnCall cou) pn vn)
+unexecuteStmt (SScanlwz cou pn arr_vlist) = 
+    executeStmt (SScanrwz (swapCallUnCall cou) pn arr_vlist)
+unexecuteStmt (SScanrwz cou pn arr_vlist) = 
+    executeStmt (SScanlwz (swapCallUnCall cou) pn arr_vlist)
 unexecuteStmt (SIota v) = executeStmt (SAtoi v)
 unexecuteStmt (SAtoi v) = executeStmt (SIota v)
 
@@ -376,7 +476,7 @@ updateOldEnv [] [] _ _ = return ()
 updateOldEnv (v1 : l1s) ((v2, _) : l2s) o_env n_env =
     case M.lookup v2 n_env of
         Nothing -> raiseError $ BadVar "should not happen"
-        Just val -> 
+        Just val ->
             case v1 of
                 NVar var_name ->
                     setVar var_name val >> updateOldEnv l1s l2s o_env n_env
@@ -388,6 +488,26 @@ updateOldEnv (v1 : l1s) ((v2, _) : l2s) o_env n_env =
                     -- setVar var_name 
                     updateOldEnv l1s l2s o_env n_env
 
+setUpEnvComp :: [VarDecl] -> Comp Env
+setUpEnvComp [] = return M.empty
+setUpEnvComp (vd : vs) = do
+            (var_name, val) <-
+                    case vd of
+                        IntV vn -> return (vn, IntVal 0)
+                        AVar1 vn len -> 
+                            if len < 1 then 
+                                raiseError $ BadVar "array must be atleast length 1" 
+                            else 
+                                return (vn, ArrayVal len (replicate (fromIntegral len) 0))
+                        AVar2 vn len arr ->
+                            if len < 1 || length arr /= fromIntegral len then
+                                raiseError $ BadVar "amount of input numbers must match array length"
+                            else 
+                                return (vn, ArrayVal len arr)
+            cur <- setUpEnvComp vs
+            return $ M.insert var_name val cur
+
+
 setUpEnv :: Procedure -> Env
 setUpEnv (Main vds _) = setUpEnvHelper vds
     where
@@ -397,9 +517,9 @@ setUpEnv (Main vds _) = setUpEnvHelper vds
                     case vd of
                         IntV vn -> (vn, IntVal 0)
                         AVar1 vn len -> if len < 1 then error "oof" else (vn, ArrayVal len (replicate (fromIntegral len) 0))
-                        AVar2 vn len arr -> 
-                            if len < 1 || length arr /= fromIntegral len 
-                                then error "oof" 
+                        AVar2 vn len arr ->
+                            if len < 1 || length arr /= fromIntegral len
+                                then error "oof"
                             else (vn, ArrayVal len arr)
             in M.insert var_name val (setUpEnvHelper vs)
 setUpEnv _ = error "only call setup env with main"

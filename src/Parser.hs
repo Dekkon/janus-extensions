@@ -123,13 +123,29 @@ pProcedure = do   keyword "procedure"
                   symbol "("
                   tdcls <- sepBy pTypeDecl (do symbol ",")
                   symbol ")"
+                  vdcls <- many pVarDecl
                   s <- pStmt
-                  return (pn, Procedure tdcls s)
+                  return (pn, Procedure tdcls vdcls s)
 
 --          |   Stmt Stmt
 pStmt :: Parser Stmt
 pStmt = do  s1 <- pStm
             option s1 $ do SSeq s1 <$> pStmt;
+
+
+isVarInExp :: VarVal -> Exp -> Bool
+isVarInExp vv e = case vv of
+    IVar vn -> isVarInExpHelper vn e
+    AVar vn e -> isVarInExpHelper vn e
+    where
+        isVarInExpHelper :: VName -> Exp -> Bool
+        isVarInExpHelper _ (EConst _) = False
+        isVarInExpHelper vn1 (EVar vn2) = vn1 == vn2
+        isVarInExpHelper vn1 (EArrIndex vn2 e) = 
+                vn1 == vn2 || isVarInExpHelper vn1 e
+        isVarInExpHelper vn (EOp _ e1 e2) = 
+                isVarInExpHelper vn e1 || isVarInExpHelper vn e2
+
 
 
 -- Stmt ::=    "If" Expr "Then" Stmt "Else" Stmt "Fi" Expr
@@ -141,9 +157,12 @@ pStmt = do  s1 <- pStm
 --          |   eps
 pStm :: Parser Stmt
 pStm =  do  v <- pVarVal -- do these whilst only parsing first vv one time
-            do  symbol "+="; SPluseq v <$> pExp;
-                <|> do  symbol "-="; SMinuseq v <$> pExp;
-                <|> do  symbol "^="; SXoreq v <$> pExp;
+            do  symbol "+=";         e <- pExp; 
+                    if isVarInExp v e then pfail else return $ SPluseq v e
+                <|> do  symbol "-="; e <- pExp; 
+                        if isVarInExp v e then pfail else return $ SMinuseq v e
+                <|> do  symbol "^="; e <- pExp; 
+                        if isVarInExp v e then pfail else return $ SXoreq v e
                 <|> do  symbol "<=>"; SSwap v <$> pVarVal;
         <|> do  keyword "call"; pn <- pIdent; SCall pn <$> pCall
         <|> do  keyword "uncall"; pn <- pIdent; SUncall pn <$> pCall
@@ -154,7 +173,13 @@ pStm =  do  v <- pVarVal -- do these whilst only parsing first vv one time
                 s1 <- pStmt; keyword "loop"; s2 <- pStmt
                 keyword "until"; e2 <- pExp; return $ SFromDoLoopUntil e1 s1 s2 e2 True
         <|> do  keyword "map"; pParserCombinator Map
+        <|> do  keyword "scanrw"; pParserCombinator Scanrw
+        <|> do  keyword "scanlw"; pParserCombinator Scanlw
         <|> do  keyword "scanl"; pParserCombinator Scanl
+        <|> do  keyword "scanlwz"; cou <- pCallorUncall; pn <- pIdent;
+                vlist <- many1 pIdent; return $ SScanlwz cou pn vlist
+        <|> do  keyword "scanrwz"; cou <- pCallorUncall; pn <- pIdent;
+                vlist <- many1 pIdent; return $ SScanrwz cou pn vlist
         <|> do keyword "iota"; SIota <$> pIdent
         <|> do keyword "atoi"; SAtoi <$> pIdent
 

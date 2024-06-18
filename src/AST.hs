@@ -7,13 +7,16 @@ module AST where
 import Data.Map(Map)
 
 data Value =
-        NoneVal
-    |   BoolVal Bool
+        BoolVal Bool
     |   IntVal Integer
-    |   StringVal String
     |   ArrayVal Integer [Integer]
     deriving (Eq, Show, Read)
 
+showVal :: Value -> String
+showVal (BoolVal True) = "true" 
+showVal (BoolVal False) = "false" 
+showVal (IntVal n) = show n 
+showVal (ArrayVal _ arr) = show arr 
 
 data Exp =
         EConst Value
@@ -30,7 +33,7 @@ type VName = String
 type PName = String
 
 data Procedure = 
-        Procedure [(VName, VarType)] Stmt
+        Procedure [(VName, VarType)] [VarDecl] Stmt
     |   Main [VarDecl] Stmt
     deriving(Eq, Show, Read)
 
@@ -62,10 +65,12 @@ data Stmt =
     |   SCompinator         Combinator CallOrUncall PName VName 
     |   SIota               VName
     |   SAtoi               VName
+    |   SScanlwz            CallOrUncall PName [VName]
+    |   SScanrwz            CallOrUncall PName [VName]
     deriving(Eq, Show, Read)  
 
 data CallOrUncall = Call | Uncall
     deriving(Eq, Show, Read)
 
-data Combinator = Map | Scanl
+data Combinator = Map | Scanl | Scanlw | Scanrw
     deriving(Eq, Show, Read)
