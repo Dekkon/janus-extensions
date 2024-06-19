@@ -141,9 +141,9 @@ isVarInExp vv e = case vv of
         isVarInExpHelper :: VName -> Exp -> Bool
         isVarInExpHelper _ (EConst _) = False
         isVarInExpHelper vn1 (EVar vn2) = vn1 == vn2
-        isVarInExpHelper vn1 (EArrIndex vn2 e) = 
+        isVarInExpHelper vn1 (EArrIndex vn2 e) =
                 vn1 == vn2 || isVarInExpHelper vn1 e
-        isVarInExpHelper vn (EOp _ e1 e2) = 
+        isVarInExpHelper vn (EOp _ e1 e2) =
                 isVarInExpHelper vn e1 || isVarInExpHelper vn e2
 
 
@@ -157,11 +157,11 @@ isVarInExp vv e = case vv of
 --          |   eps
 pStm :: Parser Stmt
 pStm =  do  v <- pVarVal -- do these whilst only parsing first vv one time
-            do  symbol "+=";         e <- pExp; 
+            do  symbol "+=";         e <- pExp;
                     if isVarInExp v e then pfail else return $ SPluseq v e
-                <|> do  symbol "-="; e <- pExp; 
+                <|> do  symbol "-="; e <- pExp;
                         if isVarInExp v e then pfail else return $ SMinuseq v e
-                <|> do  symbol "^="; e <- pExp; 
+                <|> do  symbol "^="; e <- pExp;
                         if isVarInExp v e then pfail else return $ SXoreq v e
                 <|> do  symbol "<=>"; SSwap v <$> pVarVal;
         <|> do  keyword "call"; pn <- pIdent; SCall pn <$> pCall
@@ -171,7 +171,7 @@ pStm =  do  v <- pVarVal -- do these whilst only parsing first vv one time
                 keyword "fi"; SIfThenElse e1 s1 s2 <$> pExp
         <|> do  keyword "from"; e1 <- pExp; keyword "do"
                 s1 <- pStmt; keyword "loop"; s2 <- pStmt
-                keyword "until"; e2 <- pExp; return $ SFromDoLoopUntil e1 s1 s2 e2 True
+                keyword "until"; SFromDoLoopUntil e1 s1 s2 <$> pExp;
         <|> do  keyword "map"; pParserCombinator Map
         <|> do  keyword "scanrw"; pParserCombinator Scanrw
         <|> do  keyword "scanlw"; pParserCombinator Scanlw
@@ -190,21 +190,21 @@ pParserCombinator comb = do
 
 pCallorUncall :: Parser CallOrUncall
 pCallorUncall = do keyword "uncall"; return Uncall
-            <|> do keyword "call"; return Call 
+            <|> do keyword "call"; return Call
 
 
 --this parser assumes that 
 --"call" or "uncall" has just been parsed
 pCall :: Parser [ArgVar]
 pCall = do  symbol "(";
-            varlist <- sepBy 
-                (do n <- pIdent; 
+            varlist <- sepBy
+                (do n <- pIdent;
                     option (NVar n) $
                         do  symbol "["
                             e <- pExp
                             symbol "]"
                             return $ IndexVar n e
-                ) 
+                )
                 (symbol ",")
             symbol ")"
             return varlist
@@ -298,11 +298,12 @@ pMulOp :: Parser (Exp -> Exp -> Exp)
 pMulOp =    do symbol "*"; return $ EOp Times
         <|> do symbol "/"; return $ EOp Div
 
-pNumConst :: Parser Exp
-pNumConst =
-    do isPos <- pN2
-       num <- pN3
-       return $ EConst $ IntVal $ num * if isPos then 1 else -1
+
+pNumber :: Parser Integer
+pNumber = do
+        isPos <- pN2
+        num <- pN3
+        return $ num * if isPos then 1 else -1
 pN2 :: Parser Bool
 pN2 = do string "-"; return False
       <++ return True
@@ -314,8 +315,8 @@ pN3 = do symbol "0"; return 0
             drest <- munch isDigit
             return $ read $ d1 : drest
 
-pJustNum :: Parser Integer
-pJustNum = do (EConst (IntVal n)) <- pNumConst; return n
+pNumConst :: Parser Exp
+pNumConst = EConst . IntVal <$> pNumber
 
 
 pVarVal :: Parser VarVal
@@ -325,14 +326,15 @@ pVarVal = do    name <- pIdent
                         num <- pExp -- num is the index or length of array
                         symbol "]"
                         return $ AVar name num
+
 pVarDeclVar :: Parser VarDecl
 pVarDeclVar = do   name <- pIdent
                    option (IntV name) $
                         do  symbol "["
-                            num <- pJustNum -- num is the index or length of array
+                            num <- pNumber -- num is the index or length of array
                             symbol "]"
                             option (AVar1 name num) $
                                 do  symbol "="; symbol "{";
-                                    l <- sepBy1 pJustNum (symbol ",")
+                                    l <- sepBy1 pNumber (symbol ",")
                                     symbol "}"
                                     return $ AVar2 name num l
