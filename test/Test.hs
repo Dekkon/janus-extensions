@@ -27,8 +27,8 @@ parserTests = testGroup "Parser tests" [
 -- assumes that main procedure, var_declaration and += statement is parsed correctly
 pExpressionTest :: String -> Exp -> TestTree
 pExpressionTest exp_str exp_result =
-    testCase ("exp: " ++ exp_str) $ parseProgram ("procedure main() int a x += " ++ exp_str)
-        @?= Right [("main",Main [IntV "a"] (SPluseq (IVar "x") exp_result))]
+    testCase ("exp: " ++ exp_str) $ parseProgram ("procedure main() int a q += " ++ exp_str)
+        @?= Right [("main",Main [IntV "a"] (SPluseq (IVar "q") exp_result))]
 
 
 parseExpressionsTests :: TestTree
@@ -52,20 +52,20 @@ fullParserTests = testGroup "Full Parser Tests" [
     testCase "larger program" $ parseProgram "procedure main() int x int y[4] = {1, 2, 3, 4}\
                 \x -= 2 y ^= 3 foo <=> bar procedure oof(int foo, int bar[]) foo += 2"
         @?= Right [("main",Main [IntV "x",AVar2 "y" 4 [1,2,3,4]] 
-                    (SSeq (SMinuseq (IVar "x") (EConst (IntVal 2))) 
-                    (SSeq (SXoreq (IVar "y") (EConst (IntVal 3))) 
-                    (SSwap (IVar "foo") (IVar "bar"))))),
-                    ("oof",Procedure [("foo",IntVar),("bar",ArrayVar)] 
-                    (SPluseq (IVar "foo") (EConst (IntVal 2))))]
+                   (SSeq (SMinuseq (IVar "x") (EConst (IntVal 2))) 
+                   (SSeq (SXoreq (IVar "y") (EConst (IntVal 3))) 
+                   (SSwap (IVar "foo") (IVar "bar"))))),
+                   ("oof",Procedure [("foo",IntVar),("bar",ArrayVar)] [] 
+                   (SPluseq (IVar "foo") (EConst (IntVal 2))))]
     
     ,testCase "larger program, with comments" $ parseProgram "procedure main() // this is a comment \n int x\
                     \ int y[4] = {1, 2, 3, 4} x -= 2 y ^= 3 foo <=> bar procedure oof(int foo, int bar[]) foo += 2"
         @?= Right [("main",Main [IntV "x",AVar2 "y" 4 [1,2,3,4]] 
-                    (SSeq (SMinuseq (IVar "x") (EConst (IntVal 2))) 
-                    (SSeq (SXoreq (IVar "y") (EConst (IntVal 3))) 
-                    (SSwap (IVar "foo") (IVar "bar"))))),
-                    ("oof",Procedure [("foo",IntVar),("bar",ArrayVar)] 
-                    (SPluseq (IVar "foo") (EConst (IntVal 2))))]
+                   (SSeq (SMinuseq (IVar "x") (EConst (IntVal 2))) 
+                   (SSeq (SXoreq (IVar "y") (EConst (IntVal 3))) 
+                   (SSwap (IVar "foo") (IVar "bar"))))),
+                   ("oof",Procedure [("foo",IntVar),("bar",ArrayVar)] [] 
+                   (SPluseq (IVar "foo") (EConst (IntVal 2))))]
 
     ]
 
@@ -87,7 +87,7 @@ testFailingExp teststr e checkError fenv env =
     testCase teststr $ let res =  runComp (evalExp e) fenv env 
                         in case res of
                             Right v -> assertFailure $ "expected expression to raise error instead: " ++ show v
-                            Left err -> checkIfBadIndex err
+                            Left (err, _) -> checkIfBadIndex err
 
 evalExpressionsTests :: TestTree
 evalExpressionsTests = testGroup "Eval exp tests" [
