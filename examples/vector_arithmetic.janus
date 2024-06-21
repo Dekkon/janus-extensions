@@ -1,0 +1,22 @@
+procedure add(int x, int y)
+    x += y
+procedure sub(int x, int y)
+    x -= y
+//this procedure will crash if uncalled with a value that is not a
+//multiple of 5, thus it does not break reversibility. 
+procedure mul5(int x)
+    int tmp
+    tmp += x
+    x += tmp * 4
+    tmp -= x/5
+procedure vector_operations(int a[], int b[], int c[])
+    scanlwz call add a b
+    scanlwz call sub a c
+    map call mul5 a
+
+procedure main()
+    int a[3] = {1, 4, 5}
+    int b[3] = {11, -2, 9}
+    int c[3] = {13, 1, 7}
+
+    call vector_operations(a, b, c)

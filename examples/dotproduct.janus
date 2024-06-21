@@ -1,0 +1,20 @@
+
+procedure mul(int x, int y, int z)
+    z += x * y
+
+procedure add(int a, int b)
+    b += a
+
+procedure dot_product(int a[], int b[], int res)
+    int tmp[10]  
+    scanlwz call mul a b tmp
+    scanlw call add tmp
+    res += tmp[9] // get the dot product 
+    scanrw uncall add tmp // undo operations on tmp
+    scanrwz uncall mul a b tmp
+
+procedure main()
+    int x[10] int y[10]
+    int result
+    iota x iota y
+    call dot_product(x, y, result)

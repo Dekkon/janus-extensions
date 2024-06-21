@@ -1,0 +1,27 @@
+
+procedure audio_pak_pred (int x1, int x2, int x3, int x4)
+    x4 -= 3 * x3 - 3 * x2 + x1
+
+procedure mid_side(int left, int right)
+    int tmp1 
+    int tmp2
+    tmp2 += (left + right) / 2
+
+    left -= right //Side
+    right <=> tmp1 //sets right to 0
+    right <=> tmp2 //Mid
+
+    //recomputes mid before division - subtracts side, then divides by 2
+    tmp1 -= (((right * 2) | (left & 1)) - left) / 2
+
+procedure audioPaK(int left[], int right[])
+    scanlwz call mid_side left right
+    scanrw call audio_pak_pred left
+    scanrw call audio_pak_pred right
+
+procedure main()
+    int left[10] = {1, 3, 5, 9, 1, 3, 0, 4, 2, 10} 
+    int right[10] = {4, 5, 2, 1, 4, 5, 6, 0, 4, 7}
+
+    call audioPaK(left, right)
+    uncall audioPaK(left, right)

@@ -1,0 +1,9 @@
+procedure add_y(int x, int y)
+    y += x
+procedure cumulative_sum(int a[])
+    scanlw call add_y a
+procedure main()
+    int x[11]
+    iota x
+    call cumulative_sum(x)
+    //uncall cumulative_sum(x)
