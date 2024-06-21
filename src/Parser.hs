@@ -22,7 +22,7 @@ type ParseError = String
 --          |   "From" Expr "Do" Stmt "Loop" Stmt "Until" Expr
 --          |   "Call" ident
 --          |   "Uncall" ident
---          |   "+=" Expr | "-=" Expr | "^= Expr" 
+--          |   VarVal "+=" Expr | VarVal "-=" Expr | VarVal "^= Expr" 
 --          |   Stmt Stmt
 --          |   eps
 -- 
@@ -57,7 +57,7 @@ type ParseError = String
 --   
 -- TypeDecl ::= "int" ident | "int" indent "[]"  
 --   
---   
+-- VarVal :: ident | ident "[" expr "]"
 
 -- helper functions from AP slides
 whitespace :: Parser ()
@@ -132,7 +132,7 @@ pStmt :: Parser Stmt
 pStmt = do  s1 <- pStm
             option s1 $ do SSeq s1 <$> pStmt;
 
-
+-- checks if given var is anywhere in given expression
 isVarInExp :: VarVal -> Exp -> Bool
 isVarInExp vv e = case vv of
     IVar vn -> isVarInExpHelper vn e
@@ -152,7 +152,7 @@ isVarInExp vv e = case vv of
 --          |   "From" Expr "Do" Stmt "Loop" Stmt "Until" Expr
 --          |   "Call" ident
 --          |   "Uncall" ident
---          |   ident "+=" Expr | ident "-=" Expr | ident "^= Expr" 
+--          |   VarVal "+=" Expr | VarVal "-=" Expr | VarVal "^= Expr" 
 --          |   Stmt Stmt
 --          |   eps
 pStm :: Parser Stmt
@@ -209,20 +209,6 @@ pCall = do  symbol "(";
             symbol ")"
             return varlist
 
--- pStm :: Parser Stmt
--- pStm =  do v <- pVarVal; symbol "+="; SPluseq v <$> pExp;
---     <|> do v <- pVarVal; symbol "-=";  v <$> pExp;
-
--- VarDecls ::= { VarDecl }
-pVarDecls :: Parser [VarDecl]
-pVarDecls = many pVarDecl
-
--- VarDecl ::=  "int" ident | "int" ident"[" numConst "]" 
---            | "int" ident "[" numConst=i "]" "=" "{" numConst {"," numConst}*i-1 "}"
---                                                #this means whe must have the same amount of values here
---                                                #as is the size of the array. 
-pVarDecl :: Parser VarDecl
-pVarDecl = do keyword "int"; pVarDeclVar
 
 
 -- TypeDecl ::= "int" ident | "int" indent "[]" 
@@ -298,7 +284,7 @@ pMulOp :: Parser (Exp -> Exp -> Exp)
 pMulOp =    do symbol "*"; return $ EOp Times
         <|> do symbol "/"; return $ EOp Div
 
-
+-- any number
 pNumber :: Parser Integer
 pNumber = do
         isPos <- pN2
@@ -314,11 +300,11 @@ pN3 = do symbol "0"; return 0
             -- using munch as we would always want all the digits in a number
             drest <- munch isDigit
             return $ read $ d1 : drest
-
+-- just packages integer into expression
 pNumConst :: Parser Exp
 pNumConst = EConst . IntVal <$> pNumber
 
-
+-- VarVal :: ident 
 pVarVal :: Parser VarVal
 pVarVal = do    name <- pIdent
                 option (IVar name) $
@@ -327,6 +313,20 @@ pVarVal = do    name <- pIdent
                         symbol "]"
                         return $ AVar name num
 
+
+-- VarDecls ::= { VarDecl }
+pVarDecls :: Parser [VarDecl]
+pVarDecls = many pVarDecl
+
+-- VarDecl ::=  "int" ident | "int" ident"[" numConst "]" 
+--            | "int" ident "[" numConst=i "]" "=" "{" numConst {"," numConst}*i-1 "}"
+--                                                #this means whe must have the same amount of values here
+--                                                #as is the size of the array. 
+pVarDecl :: Parser VarDecl
+pVarDecl = do keyword "int"; pVarDeclVar
+
+
+-- VarVal :: ident | ident "[" expr "]"
 pVarDeclVar :: Parser VarDecl
 pVarDeclVar = do   name <- pIdent
                    option (IntV name) $

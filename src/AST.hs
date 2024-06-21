@@ -60,7 +60,6 @@ data Stmt =
     |   SCall               PName [ArgVar] 
     |   SUncall             PName [ArgVar]
     |   SIfThenElse         Exp Stmt Stmt Exp --if exp1, then stmt1 else stmt2 fi exp2
-                -- bool here to indicate whether in first or subsequent iterations of loop
     |   SFromDoLoopUntil    Exp Stmt Stmt Exp --from exp1 do stmt1 loop stmt2 until exp2  
     |   SCompinator         Combinator CallOrUncall PName VName 
     |   SIota               VName
